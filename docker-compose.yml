@@ -14,3 +14,4 @@ services:
     build: ./analysis
     ports:
       - "5001:5001"
+    network_mode: "host"

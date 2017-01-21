@@ -15,7 +15,13 @@ logger = logging.getLogger(__name__)
 @app.route("/analyze", methods=["POST"])
 def analyze_request():
     text_to_analyze = request.json['text']
-    analysis = sentiment_analysis(text_to_analyze)
+
+    if text_to_analyze:
+        analysis = sentiment_analysis(text_to_analyze)
+    else:
+        analysis = {
+            "error": "No text recieved"
+        }
 
     return jsonify(analysis)
 
