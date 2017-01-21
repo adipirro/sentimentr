@@ -3,7 +3,7 @@ import sys
 import requests
 import os
 
-from flask import Flask
+from flask import Flask, jsonify
 
 # Setup tasks
 app = Flask(__name__)
@@ -34,10 +34,10 @@ def sync_repo(owner, repo):
     issue_collection = []
     page = 1
     while True:
-        issues_uri = 'repos/{}/{}/issues?state=all&per_page=100&page={}'.format(owner, repo, page)
-        new_issues = call_github_api(issues_uri)
+        issues_url = "https://api.github.com/repos/{}/{}/issues?state=all&per_page=100&page={}".format(owner, repo, page)
+        new_issues = call_github_api(issues_url)
 
-        if len(new_issues) == 0:
+        if new_issues == None or len(new_issues) == 0:
             break
 
         for issue in new_issues:
@@ -57,7 +57,10 @@ def process_issue(issue):
     issue_comments = []
     page = 1
     while len(issue_comments) < issue["comments"]:
-        comments = call_github_api_with_url("{}?per_page=100&page={}".format(issue["comments_url"], page))
+        comments = call_github_api("{}?per_page=100&page={}".format(issue["comments_url"], page))
+
+        if comments == None or len(comments) == 0:
+            break
 
         for comment in comments:
             issue_comments.append(process_comment(comment))
@@ -99,23 +102,21 @@ def get_sentiment_analysis(text):
 
     response = requests.post(url, json={"text": text})
 
-    return response.json()
-
-def call_github_api(uri):
-    # TODO: Get a better token?
-    token = os.environ("GH_API_TOKEN")
-
-    url = "https://api.github.com/{}".format(uri)
-
-    response = requests.get(url, auth=('token', token))
+    if response.status_code != 200:
+        logger.error("Sentiment could not be retrieved (Response Code: {})".format(response.status_code))
+        return None
 
     return response.json()
 
-def call_github_api_with_url(url):
+def call_github_api(url):
     # TODO: Get a better token?
-    token = os.environ("GH_API_TOKEN")
+    token = os.environ["GH_API_TOKEN"]
 
     response = requests.get(url, auth=('token', token))
+
+    if response.status_code != 200:
+        logger.error("Error retrieving data from GitHub (Response Code: {})".format(response.status_code))
+        return None
 
     return response.json()
 
