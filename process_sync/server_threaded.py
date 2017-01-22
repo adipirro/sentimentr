@@ -2,13 +2,13 @@ import logging
 import sys
 import requests
 import os
+import thread
 
 from flask import Flask, jsonify
 
 # Setup tasks
 app = Flask(__name__)
-logging.basicConfig(level=logging.INFO)
-logging.getLogger("requests").setLevel(logging.WARNING)
+logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
 #
@@ -32,54 +32,48 @@ def sync_repo(owner, repo):
     Processes each issue for sentiment
     Persists data to db
     """
-
-    url = "https://api.github.com/repos/{}/{}/issues?state=all&per_page=100".format(owner, repo)
-
-    response = call_github_api(url)
-
+    issue_collection = []
+    page = 1
     while True:
-        response_data = response.json()
+        issues_url = "https://api.github.com/repos/{}/{}/issues?state=all&per_page=100&page={}".format(owner, repo, page)
+        new_issues = call_github_api(issues_url)
 
-        if response_data == None or len(response_data) == 0:
+        if new_issues == None or len(new_issues) == 0:
             break
 
-        for issue in response_data:
-            process_issue(issue)
-            logger.info("[{}/{}] Processed Issue #{}".format(owner, repo, issue["number"]))
+        for issue in new_issues:
+            thread.start_new_thread(process_issue, (issue,))
+            logger.error("----- Started Processing Issue {}".format(issue["number"]))
+            # issue_collection.append(process_issue(issue))
 
-        if "next" in response.links.keys():
-            response = call_github_api(response.links["next"]["url"])
-        else:
-            break
+        # logger.info("[{}/{}] {} issues processed (Size {} bytes)".format(owner, repo, len(issue_collection), sys.getsizeof(issue_collection)))
 
-    return {
-        "done": "{}/{} Processed".format(owner, repo)
-    }
+        page += 1
+
+    return issue_collection
 
 def process_issue(issue):
     """
     Uses Github API to get all issues for a repository
     Pulls issues 100 at a time until all issues are collected
     """
-    response = call_github_api(issue["comments_url"])
     issue_comments = []
-    while True:
-        response_data = response.json()
+    page = 1
+    while len(issue_comments) < issue["comments"]:
+        comments = call_github_api("{}?per_page=100&page={}".format(issue["comments_url"], page))
 
-        if response_data == None or len(response_data) == 0:
+        if comments == None or len(comments) == 0:
             break
 
-        for comment in response_data:
-            process_comment(comment)
+        for comment in comments:
+            issue_comments.append(process_comment(comment))
 
-        if "next" in response.links.keys():
-            response = call_github_api(response.links["next"]["url"])
-        else:
-            break
+        # logger.info("{} comments processed (Size {} bytes)".format(len(issue_comments), sys.getsizeof(issue_comments)))
+        page += 1
 
     is_pr = True if "pull_request" in issue.keys() else False
 
-    return {
+    processed_issue = {
         'user_name': issue["user"]["login"],
         'user_id': issue["user"]["id"],
         'number': issue["number"],
@@ -95,6 +89,8 @@ def process_issue(issue):
         },
         'comments': issue_comments
     }
+
+    logger.error("---------- Processed Issue {}".format(issue["number"]))
 
 def process_comment(comment):
     return {
@@ -117,22 +113,17 @@ def get_sentiment_analysis(text):
 
     return response.json()
 
-
 def call_github_api(url):
     # TODO: Get a better token?
     token = os.environ["GH_API_TOKEN"]
 
     response = requests.get(url, auth=('token', token))
 
-    # TODO: Handle rate limiting
+    if response.status_code != 200:
+        logger.error("Error retrieving data from GitHub (Response Code: {})".format(response.status_code))
+        return None
 
-    return response
-
-    # if response.status_code != 200:
-    #     logger.error("Error retrieving data from GitHub (Response Code: {})".format(response.status_code))
-    #     return None
-    #
-    # return response.json()
+    return response.json()
 
 # Flask start
 if __name__ == "__main__":

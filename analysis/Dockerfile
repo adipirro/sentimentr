@@ -7,6 +7,6 @@ RUN mv nltk_data /root/nltk_data && \
     pip install -r requirements.txt && \
     python -m textblob.download_corpora
 
-EXPOSE 5000
+EXPOSE 5001
 
 CMD ["python","server.py"]

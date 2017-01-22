@@ -15,3 +15,6 @@ services:
     ports:
       - "5001:5001"
     network_mode: "host"
+  db:
+    image: rethinkdb
+    network_mode: "host"
