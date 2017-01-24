@@ -1,7 +1,10 @@
-from flask import Flask, jsonify, request
-from textblob import TextBlob
 import logging
 import re
+
+from flask import Flask, jsonify, request
+from textblob import TextBlob
+from markdown import markdown
+from bs4 import BeautifulSoup
 
 # Setup tasks
 app = Flask(__name__)
@@ -33,14 +36,22 @@ def sentiment_analysis(text):
     """
     Analyzes a string of stuff for sentiment
     """
+    if text == None:
+        return {
+            "error": "No text to process"
+        }
+
     cleaned_text = clean_text(text)
+
     text_blob = TextBlob(cleaned_text)
+
+    breakdown = sentiment_breakdown(text_blob)
 
     sentiment_dict = {
         'analyzed_text': cleaned_text,
         'polarity': text_blob.polarity,
         'subjectivity': text_blob.subjectivity,
-        'breakdown': sentiment_breakdown(text_blob)
+        'breakdown': breakdown
     }
 
     return sentiment_dict
@@ -62,11 +73,14 @@ def sentiment_breakdown(blob):
 
 def clean_text(text):
     """
-    Removes anything between `s so we, hopefully, get better results on sentiment analysis
+    Converts text to html and uses BeautifulSoup to clean it up
+    Also strips code blocks from text
     """
-    regex = re.compile(r"`.*?`", re.IGNORECASE)
+    text = re.sub(r"(\s*```[a-z]*\n[\s\S]*?\n\s*```)", "", text)
 
-    return regex.sub(" ", text)
+    html = markdown(text)
+    soup = BeautifulSoup(html, 'html.parser')
+    return soup.get_text()
 
 # Flask start
 if __name__ == "__main__":
