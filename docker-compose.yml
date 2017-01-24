@@ -1,20 +1,19 @@
 version: '3'
 services:
-  # db:
-  #   image: postgres:alpine
-  #   environment:
-  #     POSTGRES_USER: "sentimentr_db"
-  #     POSTGRES_PASSWORD: "sentimentr_db"
-  #   ports:
-  #     - "5432:5432"
-  #   volumes:
-  #     - /var/lib/postgresql/data
-  #     - ./db_stuff/db_init.sql:/docker-entrypoint-initdb.d/db_init.sql
   analyzer:
     build: ./analysis
     ports:
-      - "5001:5001"
-    network_mode: "host"
+      - "5000:5000"
   db:
     image: rethinkdb
-    network_mode: "host"
+    ports:
+      - "28015:28015"
+      - "8080:8080"
+  processor:
+    build: ./processor
+    links:
+      - db
+      - analyzer
+    environment:
+      - GH_API_TOKEN
+      - ANALYSIS_ENDPOINT=http://analyzer:5000/analyze
