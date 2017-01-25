@@ -1,23 +1,20 @@
 import logging
-import sys
 import os
 import time
 import math
 
 import requests
 import rethinkdb as r
-from jsonschema import validate, FormatChecker, ValidationError
 
-import schema
 
 # Logging setup
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logging.getLogger("requests").setLevel(logging.WARNING)
 logger = logging.getLogger("sentimentr_bot")
 
-# Rethink DB Setup
-RDB_HOST = "localhost"
-RDB_PORT = 28015
+# Rethink DB Settings
+RDB_HOST = os.getenv("RDB_HOST", "localhost")
+RDB_PORT = os.getenv("RDB_PORT", 28015)
 
 # Queue DB
 QUEUE_DB = "queue"
@@ -30,10 +27,10 @@ SENTIMENT_TABLE = "analyzed_issues"
 SENTIMENT_INDEX = "repo"
 
 # Sentiment Analysis API
-ANALYSIS_ENDPOINT = os.environ["ANALYSIS_ENDPOINT"]
+ANALYSIS_DOMAIN = os.getenv("ANALYSIS_DOMAIN", "localhost:5000")
 
 # GitHub API
-GH_API_TOKEN = os.environ["GH_API_TOKEN"]
+GH_API_TOKEN = os.getenv("GH_API_TOKEN", None)
 
 def process_repo(repo, connection):
     """
@@ -42,8 +39,12 @@ def process_repo(repo, connection):
     Processes each issue for sentiment
     Persists data to db
     """
+    url = "https://api.github.com/repos/{}/issues?state=all&sort=updated&direction=asc&per_page=100".format(repo)
 
-    url = "https://api.github.com/repos/{}/issues?state=all&per_page=100".format(repo)
+    since = get_last_update_dt(repo, connection)
+    if since:
+        url += "&since={}".format(since)
+        logger.info("[{}] Syncing from last update date: {}".format(repo, since))
 
     response = call_github_api(url)
 
@@ -93,6 +94,8 @@ def process_issue(repo, issue):
     body_sentiment = get_sentiment_analysis(issue["body"])
 
     processed_issue = {
+        'id': issue['id'],
+        'updated_at': issue["updated_at"],
         'repo': repo,
         'user': {
             'name': issue["user"]["login"],
@@ -140,7 +143,8 @@ def get_sentiment_analysis(text):
     Could be swapped out which is why the processing doesn't just happen here
     If processing fails for some reason the None value is returned
     """
-    response = requests.post(ANALYSIS_ENDPOINT, json={"text": text})
+    url = "http://{}/analyze".format(ANALYSIS_DOMAIN)
+    response = requests.post(url, json={"text": text})
 
     if response.status_code != 200:
         logger.error("Sentiment could not be retrieved (Response Code: {})".format(response.status_code))
@@ -164,24 +168,32 @@ def call_github_api(url):
         if response.status_code == 200:
             return response
 
-        if response.headers['X-RateLimit-Remaining'] == '0':
+        if int(response.headers['X-RateLimit-Remaining']) == 0:
             sleep_time = int(math.ceil(int(response.headers['X-RateLimit-Reset']) - time.time()))
             logger.info("Rate Limit hit. Waiting {} seconds before trying again".format(sleep_time))
-            time.sleep(sleep_time)
-
-        if response.status_code != 200:
+            # So it turns out in some situations this can actually be a negative number
+            # Take the absolute value to ensure we don't sleep for a negative amount of seconds
+            time.sleep(abs(sleep_time))
+        elif response.status_code != 200:
             logger.error("Whoa...having problems calling the GitHub API")
             logger.error("Url: {}".format(url))
             logger.error("Status Code: {}".format(response.status_code))
             logger.error("Headers: {}".format(response.headers))
             time.sleep(RETRY_LENGTH)
 
+def get_last_update_dt(repo, connection):
+    try:
+        most_recent_issue = r.db(SENTIMENT_DB).table(SENTIMENT_TABLE).filter({"repo": repo}).max("updated_at").run(connection)
+        return most_recent_issue["updated_at"]
+    except:
+        return None
+
 def store_issue(issue, connection):
     """
     Inserts or updates an issue in the SENTIMENT_DB
     """
-    #TODO: HAndle updates
-    r.db(SENTIMENT_DB).table(SENTIMENT_TABLE).insert(issue).run(connection)
+    result = r.db(SENTIMENT_DB).table(SENTIMENT_TABLE).insert(issue, conflict="replace").run(connection)
+    logger.info(result)
 
 def obtain_db_conn(host, port, retry_length):
     """
@@ -195,48 +207,41 @@ def obtain_db_conn(host, port, retry_length):
             logger.info("RethinkDB not found at [host={}, port={}], retrying in {} seconds".format(host, port, retry_length))
             time.sleep(retry_length)
 
+def create_db(db, connection):
+    try:
+        r.db_create(db).run(connection)
+        logger.info("DB '{}' created".format(db))
+    except:
+        logger.info("DB '{}' already exists".format(db))
+
+def create_table(db, table, connection):
+    try:
+        r.db(db).table_create(table).run(connection)
+        logger.info("Table '{}' created in '{}'".format(table, db))
+    except:
+        logger.info("Table '{}' already exists in '{}'".format(table, db))
+
+def create_index(db, table, index, connection):
+    try:
+        r.db(QUEUE_DB).table(QUEUE_TABLE).index_create(QUEUE_INDEX).run(connection)
+        r.db(QUEUE_DB).table(QUEUE_TABLE).index_wait(QUEUE_INDEX).run(connection)
+        logger.info("Index '{}' created for table '{}:{}'".format(index, db, table))
+    except:
+        logger.info("Index '{}' already exists for table '{}:{}'".format(index, db, table))
+
 def db_setup(connection):
     """
     Sets up a RethinkDB for Job Queue and Sentiment storage
     Creates any dbs/tables/queues that don't exist
     """
-    try:
-        r.db_create(QUEUE_DB).run(connection)
-        logger.info("Queue DB created")
-    except:
-        logger.info("Queue DB already exists")
-    try:
-        r.db(QUEUE_DB).table_create(QUEUE_TABLE).run(connection)
-        logger.info("Queue Table created")
-    except:
-        logger.info("Queue Table already exists")
-    try:
-        r.db(QUEUE_DB).table(QUEUE_TABLE).index_create(QUEUE_INDEX).run(connection)
-        r.db(QUEUE_DB).table(QUEUE_TABLE).index_wait(QUEUE_INDEX).run(connection)
-        logger.info("Queue Index created")
-    except:
-        logger.info("Queue Index already exists".format(QUEUE_INDEX))
-
+    create_db(QUEUE_DB, connection)
+    create_table(QUEUE_DB, QUEUE_TABLE, connection)
+    create_index(QUEUE_DB, QUEUE_TABLE, QUEUE_INDEX, connection)
     logger.info("Queue DB and Table set up, ready to consume")
 
-    # Sets up the Sentiment DB for storage of sentiment data collected
-    try:
-        r.db_create(SENTIMENT_DB).run(connection)
-        logger.info("Sentiment DB created")
-    except:
-        logger.info("Sentiment DB already exists")
-    try:
-        r.db(SENTIMENT_DB).table_create(SENTIMENT_TABLE).run(connection)
-        logger.info("Sentiment Table created")
-    except:
-        logger.info("Sentiment Table already exists")
-    try:
-        r.db(SENTIMENT_DB).table(SENTIMENT_TABLE).index_create(SENTIMENT_INDEX).run(connection)
-        r.db(SENTIMENT_DB).table(SENTIMENT_TABLE).index_wait(SENTIMENT_INDEX).run(connection)
-        logger.info("Sentiment Index created")
-    except:
-        logger.info("Sentiment Index already exists".format(SENTIMENT_INDEX))
-
+    create_db(SENTIMENT_DB, connection)
+    create_table(SENTIMENT_DB, SENTIMENT_TABLE, connection)
+    create_index(SENTIMENT_DB, SENTIMENT_TABLE, SENTIMENT_INDEX, connection)
     logger.info("Sentiment DB and Table set up, ready to get some data")
 
 #
@@ -250,12 +255,11 @@ db_setup(db_conn)
 # Main program "loop"
 # Subscribes to changes in the Job Queue while also taking into account anything that was already there
 # Since changes can come in many types each change is validated against the job schema before processing
-job_feed = r.db(QUEUE_DB).table(QUEUE_TABLE).order_by(index=QUEUE_INDEX).limit(10).changes(include_initial=True).run(db_conn)
+job_feed = r.db(QUEUE_DB).table(QUEUE_TABLE).order_by(index=QUEUE_INDEX).limit(10).changes(include_initial=True, include_types=True).run(db_conn)
 for change in job_feed:
-    try:
-        validate(change, schema.JOB, format_checker=FormatChecker())
-    except ValidationError as e:
-        logger.info("Nothing to process or malformed: {}".format(change))
+
+    if change["type"] not in ["initial", "change", "add"]:
+        logger.info("Skipping change of type: {}".format(change["type"]))
         continue
 
     repo_to_process = change["new_val"]["repo"]

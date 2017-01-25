@@ -76,7 +76,7 @@ def clean_text(text):
     Converts text to html and uses BeautifulSoup to clean it up
     Also strips code blocks from text
     """
-    text = re.sub(r"(\s*```[a-z]*\n[\s\S]*?\n\s*```)", "", text)
+    text = re.sub(r"```[\s\S]*?```", "", text)
 
     html = markdown(text)
     soup = BeautifulSoup(html, 'html.parser')

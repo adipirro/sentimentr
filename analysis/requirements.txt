@@ -1,2 +1,4 @@
 Flask
 textblob
+markdown
+bs4

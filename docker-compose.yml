@@ -11,9 +11,8 @@ services:
       - "8080:8080"
   processor:
     build: ./processor
-    links:
-      - db
-      - analyzer
     environment:
       - GH_API_TOKEN
-      - ANALYSIS_ENDPOINT=http://analyzer:5000/analyze
+      - ANALYSIS_DOMAIN=analyzer:5000
+      - RDB_HOST=db
+      - RDB_PORT=28015
