@@ -19,14 +19,28 @@ logger = logging.getLogger(__name__)
 def analyze_request():
     text_to_analyze = request.json['text']
 
-    if text_to_analyze:
+    try:
         analysis = sentiment_analysis(text_to_analyze)
-    else:
-        analysis = {
-            "error": "No text recieved"
-        }
+    except:
+        return {
+            'analyzed_text': "",
+            'polarity': 0,
+            'subjectivity': 0,
+            'breakdown': []
+        }    
 
     return jsonify(analysis)
+
+@app.errorhandler(500)
+def default_on_error():
+    logger.error("Failed to process request: {}".format(request.json['text']))
+
+    return {
+        'analyzed_text': "",
+        'polarity': 0,
+        'subjectivity': 0,
+        'breakdown': []
+    }
 
 #
 # Helper Functions
@@ -36,11 +50,6 @@ def sentiment_analysis(text):
     """
     Analyzes a string of stuff for sentiment
     """
-    if text == None:
-        return {
-            "error": "No text to process"
-        }
-
     cleaned_text = clean_text(text)
 
     text_blob = TextBlob(cleaned_text)
@@ -74,9 +83,10 @@ def sentiment_breakdown(blob):
 def clean_text(text):
     """
     Converts text to html and uses BeautifulSoup to clean it up
-    Also strips code blocks from text
+    Also strips inline code and code blocks from text
     """
     text = re.sub(r"```[\s\S]*?```", "", text)
+    text = re.sub(r"`[\s\S]*?`", "", text)
 
     html = markdown(text)
     soup = BeautifulSoup(html, 'html.parser')

@@ -29,10 +29,29 @@ def process_repo(repo):
     """
     url = "https://api.github.com/repos/{}/issues?state=all&sort=updated&direction=asc&per_page=100".format(repo)
 
-    since = model.get_last_update_dt(repo)
-    if since:
-        url += "&since={}".format(since)
-        logger.info("[{}] Syncing from last update date: {}".format(repo, since))
+    repo_info = model.get_repo(repo)
+    if repo_info:
+        url += "&since={}".format(repo_info["last_update_dt"])
+        logger.info("[{}] Syncing from last update date: {}".format(repo, repo_info["last_update_dt"]))
+    else:
+        logger.info("[{}] Repo has not been created yet. Creating.".format(repo))
+
+        repo_info_url = "https://api.github.com/repos/{}".format(repo)
+        response = call_github_api(repo_info_url)
+
+        repo_info = response.json()
+
+        model.store_user({
+            "id": repo_info["owner"]["id"],
+            "login": repo_info["owner"]["login"]
+        })
+
+        model.store_repo({
+            "id": repo_info["id"],
+            "user_id": repo_info["owner"]["id"],
+            "full_name": repo,
+            "last_update_dt": "1900-01-01T00:00:00Z"
+        })
 
     response = call_github_api(url)
 
@@ -43,14 +62,14 @@ def process_repo(repo):
             break
 
         for issue in response_data:
-            process_issue(repo, issue)
+            process_issue(repo_info["full_name"], repo_info["id"], issue)
 
         if "next" in response.links.keys():
             response = call_github_api(response.links["next"]["url"])
         else:
             break
 
-def process_issue(repo, issue):
+def process_issue(repo_name, repo_id, issue):
     """
     Given an issue in GitHub API v3 format, process it, and it's comments for
     sentiment.
@@ -58,7 +77,6 @@ def process_issue(repo, issue):
     """
     response = call_github_api(issue["comments_url"])
 
-    processed_comments = []
     while True:
         response_data = response.json()
 
@@ -66,8 +84,7 @@ def process_issue(repo, issue):
             break
 
         for comment in response_data:
-            processed_comment = process_comment(issue['id'], comment)
-            processed_comments.append(processed_comment)
+            process_comment(issue['id'], comment)
 
         if "next" in response.links.keys():
             response = call_github_api(response.links["next"]["url"])
@@ -81,29 +98,31 @@ def process_issue(repo, issue):
 
     processed_issue = {
         'id': issue['id'],
-        'updated_at': issue["updated_at"],
-        'repo': repo,
-        'username': issue["user"]["login"],
+        'repo_id': repo_id,
+        'user_id': issue["user"]["id"],
         'number': issue["number"],
         'state': issue["state"],
         'is_pr': is_pr,
         'title': {
-            'raw_text': issue["title"],
+            'raw_text': issue["title"] or "",
             'sentiment': title_sentiment
         },
         'body': {
-            'raw_text': issue["body"],
+            'raw_text': issue["body"] or "",
             'sentiment': body_sentiment
         }
     }
 
-    result = model.store_comments(processed_comments)
-    logger.info(result)
+    model.store_user({
+        "id": issue["user"]["id"],
+        "login": issue["user"]["login"]
+    })
 
-    result = model.store_issue(processed_issue)
-    logger.info(result)
+    model.store_issue(processed_issue)
 
-    logger.info("[{}] Processed Issue #{}".format(repo, processed_issue["number"]))
+    model.update_last_update_dt(repo_id, issue["updated_at"])
+
+    logger.info("[{}] Processed Issue #{}".format(repo_name, processed_issue["number"]))
 
 def process_comment(issue_id, comment):
     """
@@ -115,14 +134,19 @@ def process_comment(issue_id, comment):
     processed_comment = {
         'id': comment['id'],
         'issue_id': issue_id,
-        'username': comment["user"]["login"],
+        'user_id': comment["user"]["id"],
         'body': {
-            'raw_text': comment["body"],
+            'raw_text': comment["body"] or "",
             'sentiment': body_sentiment
         }
     }
 
-    return processed_comment
+    model.store_user({
+        "id": comment["user"]["id"],
+        "login": comment["user"]["login"]
+    })
+
+    model.store_comment(processed_comment)
 
 def get_sentiment_analysis(text):
     """
@@ -179,18 +203,12 @@ def call_github_api(url):
 model.db_setup()
 
 # Main program "loop"
-# Subscribes to changes in the Job Queue 
-# Since changes can come in many types each change is validated against the job schema before processing
-for change in model.get_job_feed():
-
-    if change["type"] not in ["initial", "change", "add"]:
-        logger.info("Skipping change of type: {}".format(change["type"]))
-        continue
-
-    repo_to_process = change["new_val"]["repo"]
+# Subscribes to changes in the Job Queue
+for job in model.get_job_feed():
+    repo_to_process = job["repo"]
 
     logger.info("Processing repository: {}".format(repo_to_process))
     process_repo(repo_to_process)
     logger.info("Processed repository: {}".format(repo_to_process))
 
-    model.delete_job(change["new_val"]["id"])
+    model.delete_job(job["id"])
