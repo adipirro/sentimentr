@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 #
 # App Routing
 #
-
 @app.route("/analyze", methods=["POST"])
 def analyze_request():
     text_to_analyze = request.json['text']
@@ -23,24 +22,10 @@ def analyze_request():
         analysis = sentiment_analysis(text_to_analyze)
     except:
         return {
-            'analyzed_text': "",
-            'polarity': 0,
-            'subjectivity': 0,
-            'breakdown': []
-        }    
+            "error": "Could not process text"
+        }
 
     return jsonify(analysis)
-
-@app.errorhandler(500)
-def default_on_error():
-    logger.error("Failed to process request: {}".format(request.json['text']))
-
-    return {
-        'analyzed_text': "",
-        'polarity': 0,
-        'subjectivity': 0,
-        'breakdown': []
-    }
 
 #
 # Helper Functions

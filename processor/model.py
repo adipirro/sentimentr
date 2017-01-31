@@ -1,5 +1,6 @@
 import os
 import logging
+import time
 from collections import namedtuple
 
 import rethinkdb as r
@@ -21,12 +22,10 @@ Table = namedtuple("Table", ["name", "schema", "indicies"])
 
 JOBS = Table("jobs", schema.job, ["inserted_at"])
 
-USERS = Table("users", schema.user, ["login"])
-REPOS = Table("repos", schema.repo, ["user_id", "full_name"])
-ISSUES = Table("issues", schema.issue, ["repo_id", "updated_at", "number", "user_id"])
-COMMENTS = Table("comments", schema.comment, ["issue_id", "user_id"])
+REPOS = Table("repos", schema.repo, ["full_name"])
+ISSUES = Table("issues", schema.issue, ["repo_id"])
 
-TABLES = [JOBS, USERS, REPOS, ISSUES, COMMENTS]
+TABLES = [JOBS, REPOS, ISSUES]
 
 def connection():
     return r.connect(host=RDB_HOST, port=RDB_PORT, db=RDB_DB)
@@ -76,16 +75,6 @@ def store_repo(repo):
     with connection() as conn:
             return r.table(REPOS.name).insert(repo, conflict="replace").run(conn)
 
-def store_user(user):
-    try:
-        validate(user, USERS.schema)
-    except ValidationError:
-        logger.exception("User could not be validated: {}".format(user))
-        return None
-
-    with connection() as conn:
-        return r.table(USERS.name).insert(user, conflict="replace").run(conn)
-
 def store_issue(issue):
     try:
         validate(issue, ISSUES.schema)
@@ -95,16 +84,6 @@ def store_issue(issue):
 
     with connection() as conn:
         return r.table(ISSUES.name).insert(issue, conflict="replace").run(conn)
-
-def store_comment(comment):
-    try:
-        validate(comment, COMMENTS.schema)
-    except ValidationError:
-        logger.exception("Comment could not be validated: {}".format(comment))
-        return None
-
-    with connection() as conn:
-        return r.table(COMMENTS.name).insert(comment, conflict="replace").run(conn)
 
 def db_setup():
     """

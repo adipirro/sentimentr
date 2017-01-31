@@ -9,8 +9,10 @@ services:
     ports:
       - "28015:28015"
       - "8080:8080"
+    command: "rethinkdb --bind all --cache-size 512"
   processor:
     build: ./processor
+    restart: always
     environment:
       - GH_API_TOKEN
       - ANALYSIS_DOMAIN=analyzer:5000

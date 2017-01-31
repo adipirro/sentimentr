@@ -41,14 +41,8 @@ def process_repo(repo):
 
         repo_info = response.json()
 
-        model.store_user({
-            "id": repo_info["owner"]["id"],
-            "login": repo_info["owner"]["login"]
-        })
-
         model.store_repo({
             "id": repo_info["id"],
-            "user_id": repo_info["owner"]["id"],
             "full_name": repo,
             "last_update_dt": "1900-01-01T00:00:00Z"
         })
@@ -62,14 +56,15 @@ def process_repo(repo):
             break
 
         for issue in response_data:
-            process_issue(repo_info["full_name"], repo_info["id"], issue)
+            process_issue(repo_info["id"], issue)
+            logger.info("[{}] Processed Issue #{}".format(repo_info["full_name"], issue["number"]))
 
         if "next" in response.links.keys():
             response = call_github_api(response.links["next"]["url"])
         else:
             break
 
-def process_issue(repo_name, repo_id, issue):
+def process_issue(repo_id, issue):
     """
     Given an issue in GitHub API v3 format, process it, and it's comments for
     sentiment.
@@ -77,6 +72,7 @@ def process_issue(repo_name, repo_id, issue):
     """
     response = call_github_api(issue["comments_url"])
 
+    processed_comments = []
     while True:
         response_data = response.json()
 
@@ -84,14 +80,12 @@ def process_issue(repo_name, repo_id, issue):
             break
 
         for comment in response_data:
-            process_comment(issue['id'], comment)
+            processed_comments.append(process_comment(comment))
 
         if "next" in response.links.keys():
             response = call_github_api(response.links["next"]["url"])
         else:
             break
-
-    is_pr = True if "pull_request" in issue.keys() else False
 
     title_sentiment = get_sentiment_analysis(issue["title"])
     body_sentiment = get_sentiment_analysis(issue["body"])
@@ -99,32 +93,21 @@ def process_issue(repo_name, repo_id, issue):
     processed_issue = {
         'id': issue['id'],
         'repo_id': repo_id,
-        'user_id': issue["user"]["id"],
         'number': issue["number"],
-        'state': issue["state"],
-        'is_pr': is_pr,
         'title': {
-            'raw_text': issue["title"] or "",
             'sentiment': title_sentiment
         },
         'body': {
-            'raw_text': issue["body"] or "",
             'sentiment': body_sentiment
-        }
+        },
+        'comments': processed_comments
     }
-
-    model.store_user({
-        "id": issue["user"]["id"],
-        "login": issue["user"]["login"]
-    })
 
     model.store_issue(processed_issue)
 
     model.update_last_update_dt(repo_id, issue["updated_at"])
 
-    logger.info("[{}] Processed Issue #{}".format(repo_name, processed_issue["number"]))
-
-def process_comment(issue_id, comment):
+def process_comment(comment):
     """
     Given a comment in GitHub API v3 format, processes it for sentiment
     and returns a simplified version with only the data that we care about
@@ -133,20 +116,12 @@ def process_comment(issue_id, comment):
 
     processed_comment = {
         'id': comment['id'],
-        'issue_id': issue_id,
-        'user_id': comment["user"]["id"],
         'body': {
-            'raw_text': comment["body"] or "",
             'sentiment': body_sentiment
         }
     }
 
-    model.store_user({
-        "id": comment["user"]["id"],
-        "login": comment["user"]["login"]
-    })
-
-    model.store_comment(processed_comment)
+    return processed_comment
 
 def get_sentiment_analysis(text):
     """

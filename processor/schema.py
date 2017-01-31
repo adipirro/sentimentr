@@ -7,27 +7,17 @@ job = {
     "required": ["repo", "inserted_at"]
 }
 
-user = {
-    "type": "object",
-    "properties": {
-        "id": { "type": "integer" },
-        "login": { "type": "string" }
-    },
-    "required": ["id", "login"]
-}
-
 repo = {
     "type": "object",
     "properties": {
         "id": { "type": "integer" },
-        "user_id": { "type": "integer" },
         "full_name": { "type": "string" },
         "last_update_dt": {
             "type": "string",
             "format": "date-time"
         }
     },
-    "required": ["id", "user_id", "full_name", "last_update_dt"]
+    "required": ["id", "full_name", "last_update_dt"]
 }
 
 sentiment = {
@@ -52,49 +42,46 @@ sentiment = {
     "required": ["analyzed_text", "polarity", "subjectivity", "breakdown"]
 }
 
-issue = {
-    "type": "object",
-    "properties": {
-        "id": { "type": "integer" },
-        "user_id": { "type": "integer" },
-        "repo_id": { "type": "integer" },
-        "number": { "type": "integer" },
-        "state": { "type": "string" },
-        "is_pr": { "type": "boolean"},
-        "title": {
-            "type": "object",
-            "properties": {
-                "raw_text": { "type": "string" },
-                "sentiment": sentiment
-            },
-            "required": ["raw_text", "sentiment"]
-        },
-        "body": {
-            "type": "object",
-            "properties": {
-                "raw_text": { "type": "string" },
-                "sentiment": sentiment
-            },
-            "required": ["raw_text", "sentiment"]
-        }
-    },
-    "required": ["id", "user_id", "repo_id", "number", "state", "is_pr", "title", "body"]
-}
-
 comment = {
     "type": "object",
     "properties": {
         "id": { "type": "integer" },
-        "user_id": { "type": "integer" },
-        "issue_id": { "type": "integer" },
         "body": {
             "type": "object",
             "properties": {
-                "raw_text": { "type": "string" },
                 "sentiment": sentiment
             },
-            "required": ["raw_text", "sentiment"]
+            "required": ["sentiment"]
         }
     },
-    "required": ["id", "user_id", "issue_id", "body"]
+    "required": ["id", "body"]
+}
+
+
+issue = {
+    "type": "object",
+    "properties": {
+        "id": { "type": "integer" },
+        "repo_id": { "type": "integer" },
+        "number": { "type": "integer" },
+        "title": {
+            "type": "object",
+            "properties": {
+                "sentiment": sentiment
+            },
+            "required": ["sentiment"]
+        },
+        "body": {
+            "type": "object",
+            "properties": {
+                "sentiment": sentiment
+            },
+            "required": ["sentiment"]
+        },
+        "comments": {
+            "type": "array",
+            "items": comment
+        }
+    },
+    "required": ["id", "repo_id", "number", "title", "body", "comments"]
 }
